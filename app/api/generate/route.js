@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 
+export const runtime = "nodejs";
+
 export async function POST(req) {
   try {
     const cookieStore = cookies();
@@ -14,13 +16,33 @@ export async function POST(req) {
     if (!user) return new Response(JSON.stringify({ error: "Non authentifié" }), { status: 401 });
 
     const body = await req.json();
-    const { prompt, image_input } = body || {};
-    if (!prompt || !Array.isArray(image_input) || image_input.length === 0) {
-      return new Response(JSON.stringify({ error: "prompt et image_input[] sont requis" }), { status: 400 });
+    const { projectId } = body || {};
+    if (!projectId) {
+      return new Response(JSON.stringify({ error: "projectId requis" }), { status: 400 });
+    }
+
+    // Fetch project and validate ownership and payment
+    const { data: project, error: selErr } = await supabase
+      .from("projects")
+      .select("id, user_id, prompt, input_image_url, status, payment_status")
+      .eq("id", projectId)
+      .single();
+    if (selErr || !project) {
+      return new Response(JSON.stringify({ error: selErr?.message || "Projet introuvable" }), { status: 404 });
+    }
+    if (project.user_id !== user.id) {
+      return new Response(JSON.stringify({ error: "Accès refusé" }), { status: 403 });
+    }
+    if (project.payment_status !== "paid") {
+      return new Response(JSON.stringify({ error: "Paiement requis" }), { status: 402 });
+    }
+    if (project.status && project.status !== "pending") {
+      return new Response(JSON.stringify({ error: "Projet déjà traité" }), { status: 400 });
     }
 
     const outputBucket = process.env.OUTPUT_BUCKET || "output-images";
-    const inputImageUrls = image_input;
+    const inputImageUrls = [project.input_image_url].filter(Boolean);
+    const prompt = project.prompt;
 
     const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
     const replicateInput = { prompt, image_input: inputImageUrls };
@@ -50,21 +72,11 @@ export async function POST(req) {
     const arrayBuffer = await res.arrayBuffer();
     const fileBuffer = Buffer.from(arrayBuffer);
 
-    const { data: projectInsert, error: projectInsertError } = await supabase
+    // Mark project as processing
+    await supabase
       .from("projects")
-      .insert({
-        user_id: user.id,
-        input_image_url: inputImageUrls[0],
-        prompt,
-        status: "processing"
-      })
-      .select()
-      .single();
-    if (projectInsertError) {
-      return new Response(JSON.stringify({ error: projectInsertError.message }), { status: 403 });
-    }
-
-    const projectId = projectInsert.id;
+      .update({ status: "processing" })
+      .eq("id", projectId);
     const outPath = `outputs/${projectId}.jpg`;
 
     const { error: uploadError } = await supabaseAdmin.storage
@@ -103,4 +115,3 @@ export async function POST(req) {
     return new Response(JSON.stringify({ error: e?.message || String(e) }), { status: 500 });
   }
 }
-

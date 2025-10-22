@@ -17,7 +17,7 @@ export default function Dashboard() {
     (async () => {
       const { data, error } = await supabase
         .from("projects")
-        .select("id, created_at, input_image_url, output_image_url, prompt, status, user_id")
+        .select("id, created_at, input_image_url, output_image_url, prompt, status, user_id, payment_status, payment_amount")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
       if (!error) setProjects(data || []);
@@ -30,31 +30,64 @@ export default function Dashboard() {
     setSubmitting(true);
     setError(null);
     try {
-      const uploadedUrls = [];
-      for (const file of files) {
-        const ext = file.name.split(".").pop();
-        const path = `uploads/${user.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-        const { error: upErr } = await supabase.storage.from(inputBucket).upload(path, file, { upsert: true });
-        if (upErr) throw upErr;
-        const { data } = supabase.storage.from(inputBucket).getPublicUrl(path);
-        uploadedUrls.push(data.publicUrl);
-      }
-      if (uploadedUrls.length === 0) throw new Error("Ajoutez au moins une image d'entrée.");
+      if (files.length === 0) throw new Error("Ajoutez au moins une image d'entrée.");
+      // Upload first image
+      const file = files[0];
+      const ext = file.name.split(".").pop();
+      const path = `uploads/${user.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from(inputBucket).upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from(inputBucket).getPublicUrl(path);
+      const inputUrl = pub.publicUrl;
 
-      const res = await fetch("/api/generate", {
+      // Create project with pending payment
+      const { data: project, error: insErr } = await supabase
+        .from("projects")
+        .insert({
+          user_id: user.id,
+          input_image_url: inputUrl,
+          prompt,
+          status: "pending",
+          payment_status: "pending",
+          payment_amount: 2.0,
+        })
+        .select()
+        .single();
+      if (insErr) throw insErr;
+
+      // Create Stripe Checkout Session and redirect
+      const res = await fetch("/api/create-checkout-session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt, image_input: uploadedUrls })
+        body: JSON.stringify({ projectId: project.id }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erreur inconnue");
-      setProjects((prev) => [data, ...prev]);
+      if (!res.ok) throw new Error(data.error || "Création de session échouée");
+
+      // Optimistically add project
+      setProjects((prev) => [project, ...prev]);
       setPrompt("");
       setFiles([]);
+      if (data.url) window.location.href = data.url;
     } catch (err) {
       setError(err.message || String(err));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleGenerate(projectId) {
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Génération échouée");
+      setProjects((prev) => [data, ...prev.filter((p) => p.id !== projectId)]);
+    } catch (e) {
+      alert(e.message || String(e));
     }
   }
 
@@ -82,11 +115,11 @@ export default function Dashboard() {
             <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} className="border rounded p-2" />
           </label>
           <label className="grid gap-1">
-            <span className="text-sm">Images d'entrée</span>
+            <span className="text-sm">Image d'entrée</span>
             <input type="file" multiple accept="image/*" onChange={(e) => setFiles(Array.from(e.target.files || []))} className="border rounded p-2" />
           </label>
           <button type="submit" disabled={submitting} className="bg-black text-white px-4 py-2 rounded">
-            {submitting ? "Génération..." : "Générer"}
+            {submitting ? "Redirection vers Stripe..." : "Générer (2€)"}
           </button>
           {error && <div className="text-red-600">Erreur: {error}</div>}
         </form>
@@ -101,7 +134,19 @@ export default function Dashboard() {
               {p.output_image_url ? (
                 <img src={p.output_image_url} alt="output" className="mt-2 border" />
               ) : (
-                <div className="mt-2 text-sm">En cours...</div>
+                <div className="mt-2 text-sm">
+                  {p.payment_status === "paid" ? (
+                    p.status === "pending" ? (
+                      <button onClick={() => handleGenerate(p.id)} className="bg-blue-600 text-white text-sm px-3 py-1 rounded">
+                        Lancer la génération
+                      </button>
+                    ) : (
+                      <span>En cours...</span>
+                    )
+                  ) : (
+                    <span>Paiement en attente...</span>
+                  )}
+                </div>
               )}
               <div className="mt-2 flex justify-between items-center">
                 <div className="text-xs truncate" title={p.prompt}>{p.prompt}</div>

@@ -10,7 +10,7 @@ export async function middleware(req: NextRequest) {
   } = await supabase.auth.getSession();
 
   const url = new URL(req.url);
-  const protectedPaths = ["/dashboard", "/api/generate", "/api/delete"];
+  const protectedPaths = ["/dashboard", "/api/generate", "/api/delete", "/api/create-checkout-session"];
   const isProtected = protectedPaths.some((p) => url.pathname === p || url.pathname.startsWith(p + "/"));
 
   if (isProtected && !session) {
@@ -26,6 +26,10 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/api/generate/:path*", "/api/delete/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/api/generate/:path*",
+    "/api/delete/:path*",
+    "/api/create-checkout-session/:path*",
+  ],
 };
-
