@@ -1,8 +1,13 @@
 import { getStripe } from "../../../../lib/stripe";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function GET() {
+  return NextResponse.json({ ok: true, where: "/api/webhooks/stripe" });
+}
 
 export async function POST(req) {
   const stripe = getStripe();
