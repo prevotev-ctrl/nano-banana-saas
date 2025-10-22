@@ -1,9 +1,11 @@
-import { stripe } from "../../../../lib/stripe";
+import { getStripe } from "../../../../lib/stripe";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(req) {
+  const stripe = getStripe();
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     return new Response(JSON.stringify({ error: "STRIPE_WEBHOOK_SECRET manquant" }), { status: 500 });
@@ -55,4 +57,3 @@ export async function POST(req) {
     return new Response(JSON.stringify({ error: e?.message || String(e) }), { status: 500 });
   }
 }
-

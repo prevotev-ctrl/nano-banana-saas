@@ -1,11 +1,13 @@
 import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { stripe } from "../../../lib/stripe";
+import { getStripe } from "../../../lib/stripe";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(req) {
   try {
+    const stripe = getStripe();
     const body = await req.json();
     const projectId = body?.projectId;
     if (!projectId) {
@@ -68,4 +70,3 @@ export async function POST(req) {
     return new Response(JSON.stringify({ error: e?.message || String(e) }), { status: 500 });
   }
 }
-
